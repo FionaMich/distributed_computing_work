@@ -1,0 +1,4 @@
+# No external dependencies are strictly required.
+# The system runs on the Python standard library (socket, threading, json, logging).
+
+

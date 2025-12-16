@@ -24,9 +24,14 @@ It is designed to match the assignment requirements you provided (transactions, 
 - **Scenario**: We model a **bank transfer** as a transaction:
   - Debit account `A` on one node
   - Credit account `B` on another node
-- **Nodes**:
-  - `Coordinator` – runs a simple **two-phase commit** (2PC) protocol
-  - `Data Nodes` – `N1`, `N2`, `N3` – each stores a subset of accounts and enforces **locking** and **local checks**
+- **System Components**:
+  - **`Coordinator`** – The central transaction manager that:
+    - Receives transaction requests from clients
+    - Orchestrates the **two-phase commit** (2PC) protocol across data nodes
+    - Makes the final commit/abort decision to ensure atomicity
+    - Does NOT store account data (only coordinates transactions)
+  - **`Data Nodes`** – `N1`, `N2`, `N3` – Each stores a subset of accounts and enforces **locking** and **local checks**
+  - **`Clients`** – Multiple instances that initiate transactions (e.g., bank customers, ATM users, or banking applications requesting transfers)
 - **Atomicity**:
   - Either **both debit and credit happen** (all nodes commit)
   - Or **nothing happens** (all nodes abort)
@@ -58,9 +63,7 @@ flowchart LR
         C3[Client 3] --> COORD
     end
 
-    subgraph Coordinator
-        COORD[coordinator.py<br/>Transaction Coordinator]
-    end
+    COORD[coordinator.py<br/>Transaction Coordinator]
 
     subgraph DataNodes[Data Nodes]
         N1[data_node.py<br/>Node N1]
@@ -76,7 +79,9 @@ flowchart LR
 **What this diagram shows:**
 
 - **Clients** (left side): Multiple client processes (`client.py`) can run concurrently. The diagram shows **3 clients** (Client 1, Client 2, Client 3) as an example, but you can run as many as needed. Each client:
-  - Initiates transactions (e.g., bank transfers) by sending `TRANSFER` requests to the coordinator over TCP/JSON
+  - Represents an entity that initiates transactions (e.g., a bank customer, ATM user, or banking application)
+  - Initiates transactions (bank transfers between accounts) by sending `TRANSFER` requests to the coordinator over TCP/JSON
+  - Note: Clients initiate **transfers** (moving money from one account to another), not just withdrawals. A withdrawal would be a special case of a transfer.
   - Runs independently in separate terminal windows or processes
   - Can send concurrent requests to test the system's concurrency control
 
@@ -188,7 +193,11 @@ sequenceDiagram
   - **Node Labels**: When you run `data_node.py`, you specify `--node-id N1` (or N2, N3) to label each instance.
 
 - **`client.py`** - **Multiple instances** (no fixed limit)
-  - Simple **CLI client** that connects to the coordinator and sends a `TRANSFER` request.
+  - Simple **CLI client** that represents an entity initiating transactions (e.g., bank customer, ATM user, banking application).
+  - Connects to the coordinator and sends a `TRANSFER` request to move money between accounts.
+  - **What clients do**: Clients initiate **bank transfers** (not just withdrawals):
+    - Transfer money from one account to another (e.g., from `N1/A` to `N2/B`)
+    - Could represent: a customer transferring between accounts, an ATM withdrawal/deposit, or any banking transaction
   - Multiple instances can be run concurrently from different shells to model multiple clients.
   - Each client instance is independent and can initiate transactions simultaneously.
   - **No labels required**: Clients don't need IDs; they just connect and send requests.

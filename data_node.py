@@ -1,3 +1,15 @@
+"""
+Data Node (Participant Node) - N1, N2, or N3
+
+This file implements a **Server Node (Participant)** as described in the architecture:
+- Run this script 3 times with different --node-id values to create nodes N1, N2, N3
+- Each instance stores account balances and participates in distributed transactions
+- Example usage:
+  - Node N1: python data_node.py --node-id N1 --port 6001
+  - Node N2: python data_node.py --node-id N2 --port 6002
+  - Node N3: python data_node.py --node-id N3 --port 6003
+"""
+
 import argparse
 import json
 import logging
@@ -14,7 +26,7 @@ class AccountStore:
     Very simple in-memory **participant node** storage.
 
     This represents the "Server Nodes (Participants)" from your slide:
-    - Each running `data_node.py` process is one participant.
+    - Each running `data_node.py` process is one participant (labeled as N1, N2, or N3).
     - Each participant stores a subset of **accounts** and their balances.
 
     Responsibilities:
@@ -194,12 +206,21 @@ def handle_connection(conn: socket.socket, addr: Tuple[str, int], store: Account
 
 
 def run_node(node_id: str, host: str, port: int, data_dir: str) -> None:
+    """
+    Run a data node instance.
+    
+    Args:
+        node_id: The node label (N1, N2, or N3) - used to identify this node
+        host: Host address to bind to
+        port: Port number (N1=6001, N2=6002, N3=6003)
+        data_dir: Directory for storing node state and logs
+    """
     logging.basicConfig(
         level=logging.INFO,
         format=f"[NODE {node_id}] %(asctime)s %(levelname)s %(message)s",
     )
     store = AccountStore(node_id=node_id, data_dir=Path(data_dir))
-    logging.info("Starting data node %s on %s:%s", node_id, host, port)
+    logging.info("Starting data node %s (Participant Node) on %s:%s", node_id, host, port)
     with socket.create_server(make_address(host, port), reuse_port=True) as server:
         while True:
             conn, addr = server.accept()
@@ -210,10 +231,16 @@ def run_node(node_id: str, host: str, port: int, data_dir: str) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Distributed account data node")
-    parser.add_argument("--node-id", required=True, help="Logical node identifier")
+    parser = argparse.ArgumentParser(
+        description="Distributed account data node (Participant Node - N1, N2, or N3)"
+    )
+    parser.add_argument(
+        "--node-id", 
+        required=True, 
+        help="Logical node identifier: N1, N2, or N3"
+    )
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--port", type=int, required=True, help="Port number (N1=6001, N2=6002, N3=6003)")
     parser.add_argument(
         "--data-dir", default="data", help="Directory where node state/logs are stored"
     )

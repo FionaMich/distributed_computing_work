@@ -1,3 +1,14 @@
+"""
+Coordinator Node - Transaction Manager
+
+This file implements the **Coordinator Node** as described in the architecture:
+- Single instance runs to manage all distributed transactions
+- Orchestrates two-phase commit (2PC) protocol across data nodes N1, N2, N3
+- Does NOT store account data itself - only coordinates transactions
+- Example usage:
+  python coordinator.py --port 5000 --nodes N1:127.0.0.1:6001,N2:127.0.0.1:6002,N3:127.0.0.1:6003
+"""
+
 import argparse
 import json
 import logging
@@ -276,13 +287,15 @@ def run_server(coordinator: Coordinator, host: str, port: int) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Transaction coordinator")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=5000)
+    parser = argparse.ArgumentParser(
+        description="Coordinator Node - Manages distributed transactions across data nodes N1, N2, N3"
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to")
+    parser.add_argument("--port", type=int, default=5000, help="Port number (default: 5000)")
     parser.add_argument(
         "--nodes",
         default="N1:127.0.0.1:6001,N2:127.0.0.1:6002,N3:127.0.0.1:6003",
-        help="Comma-separated list of node_id:host:port entries",
+        help="Comma-separated list of node_id:host:port entries (N1, N2, N3)",
     )
     parser.add_argument(
         "--data-dir", default="data", help="Directory where coordinator transaction log is stored"

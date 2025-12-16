@@ -7,6 +7,14 @@ This project is a **small-scale distributed transaction system** implemented in 
 - **Failure handling and recovery** with simple write-ahead logging and restart behavior
 - A **4-node architecture**: 1 coordinator + 3 data nodes
 
+### Quick Summary: System Components
+
+- **1 Coordinator Node**: `coordinator.py` - manages all distributed transactions
+- **3 Data Nodes**: `data_node.py` - labeled as **N1**, **N2**, **N3** (each stores account data on different ports)
+- **Multiple Clients**: `client.py` - run as many instances as you want (no fixed number)
+
+**Note**: Each `data_node.py` and `client.py` script can be run multiple times to create multiple instances. The data nodes are specifically labeled (N1, N2, N3), while clients don't need labels.
+
 It is designed to match the assignment requirements you provided (transactions, concurrency, and failures) while keeping the code size and concepts manageable.
 
 ---
@@ -32,11 +40,11 @@ It is designed to match the assignment requirements you provided (transactions, 
 
 ### 2. Architecture Diagram
 
-The system has **4 processes**:
+The system consists of **4 main processes** (plus multiple clients):
 
-- 1 × `coordinator.py`
-- 3 × `data_node.py` (N1, N2, N3)
-- Many clients (`client.py` or any TCP client) can connect to the coordinator concurrently.
+- **1 Coordinator Node**: `coordinator.py` - manages distributed transactions
+- **3 Data Nodes**: `data_node.py` - labeled as **N1**, **N2**, **N3** (each stores account data)
+- **Multiple Clients**: `client.py` - can run many instances concurrently (the diagram shows 3 as an example: Client 1, Client 2, Client 3)
 
 #### 2.1 System Architecture Diagram
 
@@ -67,7 +75,10 @@ flowchart LR
 
 **What this diagram shows:**
 
-- **Clients** (left side): Multiple client processes (`client.py`) can run concurrently. Each client initiates transactions (e.g., bank transfers) by sending `TRANSFER` requests to the coordinator over TCP/JSON.
+- **Clients** (left side): Multiple client processes (`client.py`) can run concurrently. The diagram shows **3 clients** (Client 1, Client 2, Client 3) as an example, but you can run as many as needed. Each client:
+  - Initiates transactions (e.g., bank transfers) by sending `TRANSFER` requests to the coordinator over TCP/JSON
+  - Runs independently in separate terminal windows or processes
+  - Can send concurrent requests to test the system's concurrency control
 
 - **Coordinator** (middle): The `coordinator.py` process acts as the central transaction manager. It:
   - Receives transaction requests from clients
@@ -75,11 +86,15 @@ flowchart LR
   - Makes the final commit/abort decision to ensure atomicity
   - Does NOT store account data itself (only coordinates)
 
-- **Data Nodes** (right side): Three independent `data_node.py` processes (N1, N2, N3) that:
-  - Store actual account balances (partitioned across nodes)
-  - Process sub-transactions (debits/credits) for accounts they manage
-  - Use locks for concurrency control
-  - Persist state to disk for crash recovery
+- **Data Nodes** (right side): **Exactly 3 independent `data_node.py` processes**, labeled as:
+  - **N1** (Node 1) - runs on port 6001
+  - **N2** (Node 2) - runs on port 6002
+  - **N3** (Node 3) - runs on port 6003
+  - Each data node:
+    - Stores actual account balances (partitioned across nodes)
+    - Process sub-transactions (debits/credits) for accounts they manage
+    - Uses locks for concurrency control
+    - Persists state to disk for crash recovery
 
 - **Communication**: All communication uses TCP sockets with JSON-encoded messages. The coordinator communicates bidirectionally with each data node to execute the 2PC protocol.
 
@@ -163,17 +178,20 @@ sequenceDiagram
     - Phase 2 (**COMMIT/ABORT**): commit at all prepared nodes or abort at all.
   - Manages a **simple timeout** and logs failures to reach nodes.
 
-- **`data_node.py`** (N1, N2, N3)
-  - TCP server that receives **PREPARE, COMMIT, ABORT, READ** messages.
+- **`data_node.py`** - **3 instances** (labeled **N1**, **N2**, **N3**)
+  - Each instance is a TCP server that receives **PREPARE, COMMIT, ABORT, READ** messages.
   - Keeps an **in-memory account map**: account ID → integer balance.
   - Uses **per-account locks** to implement basic **2-phase locking** (2PL-like) for concurrent transactions.
   - Uses a **write-ahead log** plus **state file** for recovery:
     - State file: current persisted balances.
     - Log file: append-only records of changes and transaction events.
+  - **Node Labels**: When you run `data_node.py`, you specify `--node-id N1` (or N2, N3) to label each instance.
 
-- **`client.py`**
+- **`client.py`** - **Multiple instances** (no fixed limit)
   - Simple **CLI client** that connects to the coordinator and sends a `TRANSFER` request.
   - Multiple instances can be run concurrently from different shells to model multiple clients.
+  - Each client instance is independent and can initiate transactions simultaneously.
+  - **No labels required**: Clients don't need IDs; they just connect and send requests.
 
 - **`common.py`**
   - Utility functions for **JSON-over-TCP** (`send_json`, `recv_json`).
@@ -326,31 +344,41 @@ No additional `pip install` commands are required because everything uses the st
 
 We will run:
 
-- **3 data nodes** on ports `6001`, `6002`, `6003`.
+- **3 data nodes** (labeled **N1**, **N2**, **N3**) on ports `6001`, `6002`, `6003`.
 - **1 coordinator** on port `5000`.
-- **Multiple clients** that connect to the coordinator.
+- **Multiple clients** (no fixed number - run as many as you want) that connect to the coordinator.
 
 #### 8.1 Start Data Nodes (N1, N2, N3)
 
-Open **three terminal windows** and run:
+**Important**: You need to run `data_node.py` **3 separate times** in **3 different terminal windows**. Each instance is a separate process representing one data node.
+
+Open **three separate terminal windows** (or PowerShell tabs) and run:
 
 **Terminal 1 (Node N1):**
+- Change: `--node-id N1` and `--port 6001`
 
 ```bash
 python data_node.py --node-id N1 --port 6001 --data-dir data
 ```
 
 **Terminal 2 (Node N2):**
+- Change: `--node-id N2` and `--port 6002`
 
 ```bash
 python data_node.py --node-id N2 --port 6002 --data-dir data
 ```
 
 **Terminal 3 (Node N3):**
+- Change: `--node-id N3` and `--port 6003`
 
 ```bash
 python data_node.py --node-id N3 --port 6003 --data-dir data
 ```
+
+**What changes between each run:**
+- `--node-id`: Changes from `N1` → `N2` → `N3` (this labels each node)
+- `--port`: Changes from `6001` → `6002` → `6003` (each node needs a unique port)
+- `--data-dir`: Stays the same (`data`) - each node creates its own files inside this directory
 
 Each node will create:
 

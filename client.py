@@ -1,3 +1,14 @@
+"""
+Client - Initiates Transactions
+
+This file implements a **Client** as described in the architecture:
+- Multiple instances of this script can run concurrently
+- Each client initiates transactions (bank transfers) by sending requests to the coordinator
+- No labels needed - clients are identified by their connection, not by IDs
+- Example usage:
+  python client.py --coord-host 127.0.0.1 --coord-port 5000 --from-node N1 --from-account A --to-node N2 --to-account B --amount 10
+"""
+
 import argparse
 import logging
 import socket
@@ -44,14 +55,16 @@ def run_client(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Simple transaction client")
-    parser.add_argument("--coord-host", default="127.0.0.1")
-    parser.add_argument("--coord-port", type=int, default=5000)
-    parser.add_argument("--from-node", required=True)
-    parser.add_argument("--from-account", required=True)
-    parser.add_argument("--to-node", required=True)
-    parser.add_argument("--to-account", required=True)
-    parser.add_argument("--amount", type=int, required=True)
+    parser = argparse.ArgumentParser(
+        description="Client - Initiates distributed transactions (no labels needed, run multiple instances)"
+    )
+    parser.add_argument("--coord-host", default="127.0.0.1", help="Coordinator host address")
+    parser.add_argument("--coord-port", type=int, default=5000, help="Coordinator port (default: 5000)")
+    parser.add_argument("--from-node", required=True, help="Source node label: N1, N2, or N3")
+    parser.add_argument("--from-account", required=True, help="Source account ID")
+    parser.add_argument("--to-node", required=True, help="Destination node label: N1, N2, or N3")
+    parser.add_argument("--to-account", required=True, help="Destination account ID")
+    parser.add_argument("--amount", type=int, required=True, help="Transfer amount")
     return parser.parse_args()
 
 

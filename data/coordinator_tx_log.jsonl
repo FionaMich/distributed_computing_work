@@ -1,0 +1,4 @@
+{"txid": "9356b737-e4f7-4a65-8097-71973b98831c", "phase": "START", "timestamp": 1765882208.3478804, "node_ops": {"N1": [{"account_id": "A", "delta": -10}], "N2": [{"account_id": "B", "delta": 10}]}}
+{"txid": "9356b737-e4f7-4a65-8097-71973b98831c", "phase": "PREPARE", "timestamp": 1765882208.3498561, "node_ops": {"N1": [{"account_id": "A", "delta": -10}], "N2": [{"account_id": "B", "delta": 10}]}}
+{"txid": "9356b737-e4f7-4a65-8097-71973b98831c", "phase": "COMMIT", "timestamp": 1765882208.3691497, "node_ops": {"N1": [{"account_id": "A", "delta": -10}], "N2": [{"account_id": "B", "delta": 10}]}, "status": "all_voted_commit"}
+{"txid": "9356b737-e4f7-4a65-8097-71973b98831c", "phase": "COMPLETE", "timestamp": 1765882208.3931742, "status": "committed"}

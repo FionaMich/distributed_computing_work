@@ -1,0 +1,28 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Tools / caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.cache/
+
+# Coverage
+.coverage
+coverage.xml
+
+# OS files
+.DS_Store
+
+
+

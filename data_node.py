@@ -221,7 +221,19 @@ def run_node(node_id: str, host: str, port: int, data_dir: str) -> None:
     )
     store = AccountStore(node_id=node_id, data_dir=Path(data_dir))
     logging.info("Starting data node %s (Participant Node) on %s:%s", node_id, host, port)
-    with socket.create_server(make_address(host, port), reuse_port=True) as server:
+
+    # SO_REUSEPORT is not available on Windows; try with it first and fall back gracefully.
+    reuse_port_requested = hasattr(socket, "SO_REUSEPORT")
+    try:
+        server = socket.create_server(make_address(host, port), reuse_port=reuse_port_requested)
+    except ValueError as exc:
+        if "SO_REUSEPORT" in str(exc):
+            logging.warning("SO_REUSEPORT not supported; retrying without port reuse.")
+            server = socket.create_server(make_address(host, port), reuse_port=False)
+        else:
+            raise
+
+    with server:
         while True:
             conn, addr = server.accept()
             t = threading.Thread(

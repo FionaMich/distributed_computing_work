@@ -276,7 +276,18 @@ def handle_client(conn: socket.socket, addr: Tuple[str, int], coordinator: Coord
 
 
 def run_server(coordinator: Coordinator, host: str, port: int) -> None:
-    with socket.create_server(make_address(host, port), reuse_port=True) as server:
+    # Windows lacks SO_REUSEPORT; try with it when available and fall back.
+    reuse_port_requested = hasattr(socket, "SO_REUSEPORT")
+    try:
+        server = socket.create_server(make_address(host, port), reuse_port=reuse_port_requested)
+    except ValueError as exc:
+        if "SO_REUSEPORT" in str(exc):
+            logging.warning("SO_REUSEPORT not supported; retrying without port reuse.")
+            server = socket.create_server(make_address(host, port), reuse_port=False)
+        else:
+            raise
+
+    with server:
         logging.info("Coordinator listening on %s:%s", host, port)
         while True:
             conn, addr = server.accept()

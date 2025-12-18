@@ -96,7 +96,7 @@ class ManagedProcess:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Distributed Store Control Panel")
+        self.title("Distributed Store Control Panel (GROUP THREE)")
         self.geometry("1200x780")
         # Apply modern theme and larger fonts
         self._apply_theme()

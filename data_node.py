@@ -55,8 +55,14 @@ class AccountStore:
         if self.state_file.exists():
             with self.state_file.open("r", encoding="utf-8") as f:
                 self.accounts = json.load(f)
+            logging.info(
+                "Loaded state from %s: %s", 
+                self.state_file, 
+                self.accounts
+            )
         else:
             self.accounts = {}
+            logging.info("No state file found at %s. Starting with empty accounts.", self.state_file)
 
     def _persist_state(self) -> None:
         """
@@ -130,13 +136,22 @@ def handle_connection(conn: socket.socket, addr: Tuple[str, int], store: Account
             # Validate that all operations are feasible (no negative balances)
             # We do a conservative check by simulating under locks.
             # Note: For simplicity, we lock accounts in sorted order to reduce deadlock risk.
+            # Use non-blocking locks: if locks can't be acquired immediately, abort the transaction.
             accounts = sorted({op["account_id"] for op in ops})
             acquired = []
             try:
-                # Acquire all locks for accounts touched by this transaction.
+                # Try to acquire all locks for accounts touched by this transaction (non-blocking).
+                # If any lock is already held by another transaction, abort immediately.
                 for acc in accounts:
                     lock = store.get_lock(acc)
-                    lock.acquire()
+                    if not lock.acquire(blocking=False):
+                        # Lock is already held - transaction conflicts with another in progress
+                        # Vote ABORT immediately rather than waiting
+                        store._append_log(
+                            {"txid": txid, "action": "prepare_failed", "reason": f"lock_contention_on_{acc}"}
+                        )
+                        send_json(conn, {"type": "VOTE_ABORT", "txid": txid})
+                        return
                     acquired.append(lock)
                 # Check feasibility of the transaction under those locks.
                 temp_balances = {k: store.accounts.get(k, 0) for k in accounts}
@@ -146,6 +161,9 @@ def handle_connection(conn: socket.socket, addr: Tuple[str, int], store: Account
                     temp_balances[acc] = temp_balances.get(acc, 0) + delta
                     if temp_balances[acc] < 0:
                         # Local constraint violated -> vote to ABORT globally.
+                        store._append_log(
+                            {"txid": txid, "action": "prepare_failed", "reason": "insufficient_balance"}
+                        )
                         send_json(conn, {"type": "VOTE_ABORT", "txid": txid})
                         return
                 # Feasible under current balances:
@@ -219,6 +237,7 @@ def run_node(node_id: str, host: str, port: int, data_dir: str) -> None:
         level=logging.INFO,
         format=f"[NODE {node_id}] %(asctime)s %(levelname)s %(message)s",
     )
+    # Create store after logging is initialized so _load_state can log
     store = AccountStore(node_id=node_id, data_dir=Path(data_dir))
     logging.info("Starting data node %s (Participant Node) on %s:%s", node_id, host, port)
 

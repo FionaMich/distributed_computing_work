@@ -1,3 +1,0 @@
-{"txid": "9356b737-e4f7-4a65-8097-71973b98831c", "action": "prepare_ok", "operations": [{"account_id": "A", "delta": -10}]}
-{"txid": "9356b737-e4f7-4a65-8097-71973b98831c", "account_id": "A", "delta": -10, "old_balance": 100, "new_balance": 90, "action": "update"}
-{"txid": "9356b737-e4f7-4a65-8097-71973b98831c", "action": "commit"}

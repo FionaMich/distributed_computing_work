@@ -430,13 +430,13 @@ Then restart node `N1`.
 Open **another terminal** and run a client:
 
 ```bash
-python client.py ^
-  --coord-host 127.0.0.1 ^
-  --coord-port 5000 ^
-  --from-node N1 ^
-  --from-account A ^
-  --to-node N2 ^
-  --to-account B ^
+python client.py \
+  --coord-host 127.0.0.1 \
+  --coord-port 5000 \
+  --from-node N1 \
+  --from-account A \
+  --to-node N2 \
+  --to-account B \
   --amount 10
 ```
 
@@ -456,92 +456,151 @@ You should see logs:
 
 ### 9. Demonstrating Concurrency
 
-To show **multiple concurrent clients**:
+**MPESA Analogy**: Think of this system like MPESA (mobile money transfer):
+- **Nodes N1, N2, N3** = Different MPESA users/accounts (e.g., Alice's account on N1, Bob's on N2, Charlie's on N3)
+- **Coordinator** = MPESA network/system that ensures money transfers are processed correctly
+- **Concurrent transactions** = Multiple people trying to send money at the same time
+- **Locks** = MPESA system ensuring that if Alice sends money to both Bob and Charlie simultaneously, her account balance is correctly deducted and neither transfer causes a double-spend or negative balance
+
+To show **multiple concurrent clients** and **per-account lock serialization**:
 
 1. Keep all nodes and coordinator **running**.
-2. Open **several terminal windows**.
-3. Run **several clients simultaneously**, for example:
+2. **Demo 1: Simple concurrent transfers** (different accounts):
 
-   - Client 1 transfers from `N1/A` to `N2/B`:
+   **On Windows (PowerShell):**
+   ```powershell
+   .\demo_concurrent_transfers.ps1
+   ```
 
-     ```bash
-     python client.py --coord-host 127.0.0.1 --coord-port 5000 --from-node N1 --from-account A --to-node N2 --to-account B --amount 5
-     ```
+   **On Linux/Mac (Bash) or Windows (Git Bash/WSL):**
+   ```bash
+   bash demo_concurrent_transfers.sh
+   ```
 
-   - Client 2 transfers from `N1/A` to `N3/C`:
+   This runs three transfers simultaneously:
+   - **N1 → N2**: Alice (N1/A) sends 10 to Bob (N2/B)
+   - **N2 → N1**: Bob (N2/B) sends 10 to Alice (N1/A)
+   - **N3 → N1**: Charlie (N3/C) sends 20 to Alice (N1/A)
 
-     ```bash
-     python client.py --coord-host 127.0.0.1 --coord-port 5000 --from-node N1 --from-account A --to-node N3 --to-account C --amount 8
-     ```
+3. **Demo 2: Conflicting concurrent transfers** (same accounts - demonstrates per-account locks):
 
-4. Observe:
-   - Per-account locks at data nodes serialize conflicting updates.
-   - No account ever goes negative if initially set correctly.
-   - Node logs show concurrent transactions but with **safe ordering**.
+   **On Windows (PowerShell):**
+   ```powershell
+   .\demo_conflicting_locks.ps1
+   ```
 
-In your report you can discuss:
+   **On Linux/Mac (Bash) or Windows (Git Bash/WSL):**
+   ```bash
+   bash demo_conflicting_locks.sh
+   ```
 
-- How locks prevent race conditions on shared accounts.
-- The trade-off between simplicity (per-account locks) and potential for contention.
+   This demonstrates **per-account locks serializing conflicting updates** involving all three nodes:
+   - **Client 1**: N1/A → N2/B (amount 100) - Alice sends money to Bob (uses N1 and N2)
+   - **Client 2**: N2/B → N3/C (amount 150) - Bob sends money to Charlie (uses N2 and N3, conflicts on account B!)
+   
+   Both transactions involve all three nodes (N1, N2, N3) and conflict on account B on N2. The **per-account locks** in the data nodes will:
+   - Use non-blocking lock acquisition: The first transaction locks account B, the second fails immediately if the lock is held
+   - Abort on conflict: If Client 2 can't acquire the lock (because Client 1 already holds it), Client 2's transaction aborts immediately rather than waiting
+   - Prevent double-spending: Concurrent transactions on the same account cannot proceed simultaneously - one succeeds, the other aborts
+   
+   **Note**: Make sure account B on N2 has sufficient balance before running this demo. The state file `data/node_N2_state.json` should contain `{"B": <sufficient_balance>}` or similar.
+
+4. **Observe** (like watching MPESA transaction logs):
+   - **Multiple transactions** can be processed concurrently by the coordinator
+   - **Per-account locks** at data nodes prevent conflicting updates: if Alice sends money to two people at once, the first transaction locks her account and the second fails immediately (prevents double-spending)
+   - **No account ever goes negative** if initially set correctly (just like MPESA prevents overdrafts)
+   - **Node logs** show concurrent transactions with conflict detection (check `data/node_N1_log.jsonl`, etc.)
+   
+   In the logs, you'll see:
+   - Both transactions start PREPARE phase simultaneously
+   - One transaction (Client 1) acquires lock on B (N2) first and proceeds
+   - The second transaction (Client 2) fails to acquire the lock and immediately aborts (look for `"action": "prepare_failed", "reason": "lock_contention_on_B"` or similar)
+   - Only one transaction completes successfully, preventing race conditions and double-spending
+   - All three nodes (N1, N2, N3) are involved in the transactions
+
+**In your report you can discuss**:
+
+- How the two-phase commit protocol ensures atomicity across distributed nodes
+- How **per-account locks** (implemented in data nodes) prevent race conditions by serializing conflicting updates to the same account
+- How locks are acquired during PREPARE phase and released after voting, ensuring safe concurrent transaction processing
+- The trade-off between lock granularity (per-account locks) and potential for contention when multiple transactions access the same accounts
+- How this mirrors real-world financial systems (like MPESA) ensuring atomicity and consistency while handling concurrent transactions
 
 ---
 
 ### 10. Demonstrating Failures and Recovery
 
+**MPESA Analogy**: These scenarios demonstrate what happens when parts of the MPESA network fail:
+- **Node crash** = One MPESA user's phone loses network connection or crashes during a transfer
+- **Coordinator crash** = The MPESA central system crashes while processing a transaction
+- **Recovery** = Ensuring money doesn't disappear or get double-deducted when systems come back online
+
 Here is a **simple step-by-step scenario** you can reproduce and describe:
 
 #### 10.1 Node Crash During Prepare / Commit
 
+**MPESA Scenario**: Alice tries to send money to Bob, but Bob's phone loses connection mid-transaction.
+
 1. Start all nodes and coordinator as above.
-2. Make sure `N1/A` has enough balance (e.g., 100).
-3. Start a transfer client **from `N1/A` to `N2/B`** with amount `50`.
+2. Make sure `N1/A` has enough balance (e.g., 100) - this is like Alice having money in her MPESA account.
+3. Start a transfer client **from `N1/A` to `N2/B`** with amount `50`:
+   ```powershell
+   python client.py --coord-host 127.0.0.1 --coord-port 5000 --from-node N1 --from-account A --to-node N2 --to-account B --amount 50
+   ```
 4. While the logs show the coordinator is in **PREPARE** or just about to **COMMIT**:
-   - **Force close Node N2** (Ctrl+C the terminal running `N2`).
+   - **Force close Node N2** (Ctrl+C the terminal running `N2`) - simulating Bob's phone losing connection.
 5. Observe:
-   - Coordinator logs a failure to contact N2.
-   - Coordinator treats this as `VOTE_ABORT`.
-   - Sends `ABORT` to other nodes.
-   - Client sees `TRANSFER_RESULT(success=False)`.
+   - Coordinator logs a failure to contact N2 (like MPESA system detecting Bob's phone is unreachable).
+   - Coordinator treats this as `VOTE_ABORT` (transaction cannot complete).
+   - Sends `ABORT` to other nodes (tells Alice's account not to deduct the money).
+   - Client sees `TRANSFER_RESULT(success=False)` (Alice receives "Transaction failed" message).
 
-6. Restart `N2`:
+6. Restart `N2` (Bob's phone reconnects):
 
-```bash
+```powershell
 python data_node.py --node-id N2 --port 6002 --data-dir data
 ```
 
 7. Check the **state files**:
-   - Balances should be consistent; no half-committed transfer.
+   - Balances should be consistent; no half-committed transfer (Alice's money wasn't deducted, Bob didn't receive anything).
 
 #### 10.2 Node Restart and State Reload
 
-1. Stop one node (e.g., `N1`) and inspect its `node_N1_state.json` file.
-2. Start the node again.
+**MPESA Scenario**: A user restarts their phone - their account balance should be exactly as it was before.
+
+1. Stop one node (e.g., `N1`) and inspect its `node_N1_state.json` file (check Alice's account balance).
+2. Start the node again (simulating phone restart).
 3. Confirm that:
-   - Balances are **restored** from the state file.
-   - New transactions continue from that consistent snapshot.
+   - Balances are **restored** from the state file (Alice's balance is exactly as it was saved).
+   - New transactions continue from that consistent snapshot (can continue making transfers).
 
 #### 10.3 Coordinator Crash and Recovery
+
+**MPESA Scenario**: The MPESA central system crashes while processing a transfer between two users.
 
 This demonstrates the **coordinator crash recovery** mechanism:
 
 1. Start all nodes and coordinator as above.
-2. Initiate a transfer transaction (e.g., from `N1/A` to `N2/B`).
+2. Initiate a transfer transaction (e.g., from `N1/A` to `N2/B`):
+   ```powershell
+   python client.py --coord-host 127.0.0.1 --coord-port 5000 --from-node N1 --from-account A --to-node N2 --to-account B --amount 30
+   ```
 3. **While the transaction is in progress** (during PREPARE or COMMIT phase):
-   - **Force close the coordinator** (Ctrl+C the terminal running `coordinator.py`).
+   - **Force close the coordinator** (Ctrl+C the terminal running `coordinator.py`) - simulating MPESA central system crash.
 4. Observe:
    - The transaction is incomplete (coordinator crashed before sending final COMMIT/ABORT).
-   - Data nodes remain in a prepared state but do not commit (they wait for explicit COMMIT).
-5. **Restart the coordinator**:
-   ```bash
+   - Data nodes remain in a prepared state but do not commit (they wait for explicit COMMIT - like accounts in limbo, not yet updated).
+5. **Restart the coordinator** (MPESA system comes back online):
+   ```powershell
    python coordinator.py --port 5000 --nodes N1:127.0.0.1:6001,N2:127.0.0.1:6002,N3:127.0.0.1:6003
    ```
 6. Observe the coordinator logs:
-   - Coordinator scans `data/coordinator_tx_log.jsonl` for incomplete transactions.
-   - For each incomplete transaction, it sends `ABORT` to all involved nodes.
-   - Logs show: `"Found N incomplete transactions from previous run. Aborting them..."`
+   - Coordinator scans `data/coordinator_tx_log.jsonl` for incomplete transactions (checks what transactions were in progress).
+   - For each incomplete transaction, it sends `ABORT` to all involved nodes (rolls back any pending transfers).
+   - Logs show: `"Found N incomplete transactions from previous run. Aborting them..."` (MPESA system clears any stuck transactions).
 7. Verify consistency:
-   - Check node state files: balances should be consistent (no partial commits).
-   - The system is now ready to handle new transactions.
+   - Check node state files: balances should be consistent (no partial commits - Alice's money wasn't lost, Bob didn't receive phantom money).
+   - The system is now ready to handle new transactions (users can make transfers again).
 
 **Key points for your report**:
 

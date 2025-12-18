@@ -55,6 +55,7 @@ class Coordinator:
         Append a transaction log entry for crash recovery.
         
         Phases: START, PREPARE, COMMIT, ABORT, COMPLETE
+        Thread-safe: Uses lock to protect file writes and active_txs updates.
         """
         entry = {
             "txid": txid,
@@ -66,14 +67,16 @@ class Coordinator:
         if status:
             entry["status"] = status
         
-        with self.tx_log_file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-        
-        # Keep in-memory tracking for active transactions
-        if phase in ["START", "PREPARE", "COMMIT"]:
-            self.active_txs[txid] = entry
-        elif phase in ["COMPLETE", "ABORT"]:
-            self.active_txs.pop(txid, None)
+        # Use lock only for thread-safe logging and active_txs tracking
+        with self.lock:
+            with self.tx_log_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+            
+            # Keep in-memory tracking for active transactions
+            if phase in ["START", "PREPARE", "COMMIT"]:
+                self.active_txs[txid] = entry
+            elif phase in ["COMPLETE", "ABORT"]:
+                self.active_txs.pop(txid, None)
 
     def _recover_incomplete_transactions(self) -> None:
         """
@@ -214,35 +217,34 @@ class Coordinator:
         # Log transaction start
         self._log_transaction(txid, "START", node_ops=node_ops)
         
-        # Serialize transfers in this demo to simplify reasoning in logs.
-        with self.lock:
-            votes: Dict[str, bool] = {}
-            # Phase 1: PREPARE
-            self._log_transaction(txid, "PREPARE", node_ops=node_ops)
-            
-            for node_id, ops in node_ops.items():
-                ok = self._prepare_on_node(node_id, txid, ops)
-                votes[node_id] = ok
-                logging.info("Node %s vote for %s: %s", node_id, txid, ok)
+        # Allow concurrent transactions - per-account locks in data nodes will serialize conflicting updates
+        votes: Dict[str, bool] = {}
+        # Phase 1: PREPARE
+        self._log_transaction(txid, "PREPARE", node_ops=node_ops)
+        
+        for node_id, ops in node_ops.items():
+            ok = self._prepare_on_node(node_id, txid, ops)
+            votes[node_id] = ok
+            logging.info("Node %s vote for %s: %s", node_id, txid, ok)
 
-            if all(votes.values()):
-                # Phase 2: COMMIT everywhere
-                logging.info("All nodes voted COMMIT for %s. Committing.", txid)
-                self._log_transaction(txid, "COMMIT", node_ops=node_ops, status="all_voted_commit")
-                for node_id, ops in node_ops.items():
-                    self._commit_on_node(node_id, txid, ops)
-                logging.info("Transaction %s committed.", txid)
-                self._log_transaction(txid, "COMPLETE", status="committed")
-                return True
-            else:
-                logging.info(
-                    "At least one node voted ABORT for %s. Aborting on all nodes.", txid
-                )
-                self._log_transaction(txid, "ABORT", node_ops=node_ops, status="vote_abort")
-                for node_id in node_ops:
-                    self._abort_on_node(node_id, txid)
-                self._log_transaction(txid, "COMPLETE", status="aborted")
-                return False
+        if all(votes.values()):
+            # Phase 2: COMMIT everywhere
+            logging.info("All nodes voted COMMIT for %s. Committing.", txid)
+            self._log_transaction(txid, "COMMIT", node_ops=node_ops, status="all_voted_commit")
+            for node_id, ops in node_ops.items():
+                self._commit_on_node(node_id, txid, ops)
+            logging.info("Transaction %s committed.", txid)
+            self._log_transaction(txid, "COMPLETE", status="committed")
+            return True
+        else:
+            logging.info(
+                "At least one node voted ABORT for %s. Aborting on all nodes.", txid
+            )
+            self._log_transaction(txid, "ABORT", node_ops=node_ops, status="vote_abort")
+            for node_id in node_ops:
+                self._abort_on_node(node_id, txid)
+            self._log_transaction(txid, "COMPLETE", status="aborted")
+            return False
 
 
 def handle_client(conn: socket.socket, addr: Tuple[str, int], coordinator: Coordinator) -> None:

@@ -355,7 +355,9 @@ The project includes a GUI control panel (gui_app.py) to run the full system wit
 
 Launch
 - Windows/macOS/Linux:
-  - python gui_app.py
+  ```bash
+  python gui_app.py
+  ```
 
 Title: "Distributed Store Control Panel (GROUP THREE)" with a blue-toned dark theme, larger fonts, and horizontal scrolling in logs/results/state views.
 
@@ -395,7 +397,7 @@ For detailed recovery recipes and evidence to collect, see RESULTS.md section "U
 
 ---
 
-### 8. Running the 4-Node System
+### 9. Running the 4-Node System
 
 We will run:
 
@@ -403,7 +405,7 @@ We will run:
 - **1 coordinator** on port `5000`.
 - **Multiple clients** (no fixed number - run as many as you want) that connect to the coordinator.
 
-#### 8.1 Start Data Nodes (N1, N2, N3)
+#### 9.1 Start Data Nodes (N1, N2, N3)
 
 **Important**: You need to run `data_node.py` **3 separate times** in **3 different terminal windows**. Each instance is a separate process representing one data node.
 
@@ -440,7 +442,7 @@ Each node will create:
 - `data/node_NX_state.json`
 - `data/node_NX_log.jsonl`
 
-#### 8.2 Start the Coordinator
+#### 9.2 Start the Coordinator
 
 Open **another terminal** and run:
 
@@ -453,7 +455,7 @@ The coordinator will now:
 - Listen on `127.0.0.1:5000` for client connections.
 - Know how to reach the three data nodes.
 
-#### 8.3 Initialize Some Balances (Optional)
+#### 9.3 Initialize Some Balances (Optional)
 
 By default, accounts start with balance `0`. To **seed balances**, you can:
 
@@ -471,7 +473,7 @@ For example, to give `A` on `N1` a balance of `100`:
 
 Then restart node `N1`.
 
-#### 8.4 Run a Single Transfer
+#### 9.4 Run a Single Transfer
 
 Open **another terminal** and run a client:
 
@@ -500,7 +502,7 @@ You should see logs:
 
 ---
 
-### 9. Demonstrating Concurrency
+### 10. Demonstrating Concurrency
 
 **MPESA Analogy**: Think of this system like MPESA (mobile money transfer):
 - **Nodes N1, N2, N3** = Different MPESA users/accounts (e.g., Alice's account on N1, Bob's on N2, Charlie's on N3)
@@ -566,7 +568,7 @@ To show **multiple concurrent clients** and **per-account lock serialization**:
 
 ---
 
-### 10. Demonstrating Failures and Recovery
+### 11. Demonstrating Failures and Recovery
 
 **MPESA Analogy**: These scenarios demonstrate what happens when parts of the MPESA network fail:
 - **Node crash** = One MPESA user's phone loses network connection or crashes during a transfer

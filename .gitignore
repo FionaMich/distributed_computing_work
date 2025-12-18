@@ -10,6 +10,7 @@ env/
 # IDE/editor
 .vscode/
 .idea/
+.qodo/
 
 # Tools / caches
 .mypy_cache/

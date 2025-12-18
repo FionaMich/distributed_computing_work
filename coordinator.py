@@ -336,4 +336,3 @@ if __name__ == "__main__":
     coord = Coordinator(nodes=nodes, data_dir=args.data_dir)
     run_server(coord, args.host, args.port)
 
-

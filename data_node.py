@@ -53,13 +53,23 @@ class AccountStore:
         """
         self.data_dir.mkdir(parents=True, exist_ok=True)
         if self.state_file.exists():
-            with self.state_file.open("r", encoding="utf-8") as f:
-                self.accounts = json.load(f)
-            logging.info(
-                "Loaded state from %s: %s", 
-                self.state_file, 
-                self.accounts
-            )
+            try:
+                with self.state_file.open("r", encoding="utf-8") as f:
+                    self.accounts = json.load(f)
+                logging.info(
+                    "Loaded state from %s: %s",
+                    self.state_file,
+                    self.accounts,
+                )
+            except (json.JSONDecodeError, OSError, ValueError) as e:
+                # If the state file contains comments or malformed JSON, don't crash; start empty
+                self.accounts = {}
+                logging.warning(
+                    "Invalid or unreadable state file %s (%s). Starting with empty accounts.",
+                    self.state_file,
+                    e,
+                )
+            
         else:
             self.accounts = {}
             logging.info("No state file found at %s. Starting with empty accounts.", self.state_file)
@@ -242,15 +252,12 @@ def run_node(node_id: str, host: str, port: int, data_dir: str) -> None:
     logging.info("Starting data node %s (Participant Node) on %s:%s", node_id, host, port)
 
     # SO_REUSEPORT is not available on Windows; try with it first and fall back gracefully.
-    reuse_port_requested = hasattr(socket, "SO_REUSEPORT")
+    # Do not request SO_REUSEPORT at all to avoid Windows-specific issues.
     try:
-        server = socket.create_server(make_address(host, port), reuse_port=reuse_port_requested)
-    except ValueError as exc:
-        if "SO_REUSEPORT" in str(exc):
-            logging.warning("SO_REUSEPORT not supported; retrying without port reuse.")
-            server = socket.create_server(make_address(host, port), reuse_port=False)
-        else:
-            raise
+        server = socket.create_server(make_address(host, port))
+    except Exception as exc:
+        logging.error("Failed to bind node %s on %s:%s: %s", node_id, host, port, exc)
+        raise
 
     with server:
         while True:

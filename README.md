@@ -349,6 +349,52 @@ No additional `pip install` commands are required because everything uses the st
 
 ---
 
+### 8. Using the Tkinter GUI (Control Panel)
+
+The project includes a GUI control panel (gui_app.py) to run the full system with one window. It provides tabs for process control, operations, logs, state viewing, and failure/recovery demos.
+
+Launch
+- Windows/macOS/Linux:
+  - python gui_app.py
+
+Title: "Distributed Store Control Panel (GROUP THREE)" with a blue-toned dark theme, larger fonts, and horizontal scrolling in logs/results/state views.
+
+Start processes
+- Coordinator
+  - Set Coord host and Coord port (defaults 127.0.0.1:5000).
+  - Node controls define the nodes map (count and base port). Click Start Coordinator.
+- Nodes
+  - Set Nodes (count) and Base port (default base 6001). Click Start Nodes to launch N1..N{count}.
+
+Operations tab
+- Operation = read_balance
+  - Node (e.g., N1) and Account (e.g., A). Click Execute. The result appears in Results.
+- Operation = transfer
+  - From Node/Account, To Node/Account, Amount. Click Execute to run client.py via the coordinator.
+
+Concurrency demos
+- Run concurrent transfers (3 clients): launches three transfers concurrently.
+- Run conflicting locks demo (2 clients): runs two transfers that conflict on N2/B to show lock serialization.
+
+Logs tab
+- Live, aggregated logs (stdout/stderr) for Coordinator and Nodes with prefixes. Horizontal and vertical scroll supported.
+
+State Viewer tab
+- Lists files under data/*. Click to preview content with JSON pretty-printing and horizontal/vertical scrolling.
+
+Failures / Recovery tab
+- Delay (ms), Node to crash, Coordinator fail at (None/PREPARE/BEFORE_COMMIT/AFTER_COMMIT), Coord fail delay (ms).
+- Start transfer, then crash COORDINATOR: starts a transfer then crashes/restarts the coordinator on timing.
+- Start transfer, then crash NODE (selected): starts a transfer then crashes/restarts the selected node.
+- Use PREPARE to force abort-on-recovery; AFTER_COMMIT to demonstrate durability.
+
+Close
+- Closing the window stops the coordinator and all nodes cleanly.
+
+For detailed recovery recipes and evidence to collect, see RESULTS.md section "Using the Failure/Recovery Panel Effectively (Crash Timing Recipes)".
+
+---
+
 ### 8. Running the 4-Node System
 
 We will run:

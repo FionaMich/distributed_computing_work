@@ -4,10 +4,12 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, font as tkfont
 from pathlib import Path
 from typing import Optional, List, Dict
+import os
 
 from common import send_json, recv_json, make_address
 
@@ -27,9 +29,10 @@ DEFAULT_NODE_HOST = "127.0.0.1"
 
 
 class ManagedProcess:
-    def __init__(self, name: str, cmd: List[str]):
+    def __init__(self, name: str, cmd: List[str], env: Optional[Dict[str, str]] = None):
         self.name = name
         self.cmd = cmd
+        self.env = env or os.environ.copy()
         self.proc: Optional[subprocess.Popen] = None
         self.stdout_queue: "queue.Queue[str]" = queue.Queue()
         self.stderr_queue: "queue.Queue[str]" = queue.Queue()
@@ -44,6 +47,7 @@ class ManagedProcess:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env=self.env,
         )
         self._stop_event.clear()
         threading.Thread(target=self._reader, args=(self.proc.stdout, self.stdout_queue), daemon=True).start()
@@ -94,6 +98,8 @@ class App(tk.Tk):
         super().__init__()
         self.title("Distributed Store Control Panel")
         self.geometry("1200x780")
+        # Apply modern theme and larger fonts
+        self._apply_theme()
 
         # State
         self.coordinator: Optional[ManagedProcess] = None
@@ -106,6 +112,31 @@ class App(tk.Tk):
         # Timers
         self.after(200, self._drain_logs_loop)
         self.after(1000, self._refresh_state_files_loop)
+
+    def _apply_theme(self):
+        try:
+            style = ttk.Style(self)
+            try:
+                style.theme_use('clam')
+            except Exception:
+                pass
+            # Increase common fonts
+            try:
+                for fname in ("TkDefaultFont", "TkTextFont", "TkFixedFont"):
+                    f = tkfont.nametofont(fname)
+                    f.configure(size=11)
+            except Exception:
+                pass
+            # Modern paddings
+            style.configure("TButton", padding=6)
+            style.configure("TNotebook.Tab", padding=(12, 6))
+            # Dark-ish palette where supported by ttk theme
+            for elem in ("TFrame", "TLabel", "TLabelframe", "TLabelframe.Label"):
+                style.configure(elem, background="#0f172a", foreground="#e2ecff")
+            style.configure("TEntry", fieldbackground="#1e293b", foreground="#e2ecff")
+        except Exception:
+            # Best-effort theming; continue even if some platforms don't support all options
+            pass
 
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
@@ -160,6 +191,11 @@ class App(tk.Tk):
         nb.add(self.tab_state, text="State Viewer")
         self._build_state_tab(self.tab_state)
 
+        # Tab: Failures / Recovery
+        self.tab_fail = ttk.Frame(nb)
+        nb.add(self.tab_fail, text="Failures / Recovery")
+        self._build_failures_tab(self.tab_fail)
+
     def _build_ops_tab(self, parent: ttk.Frame):
         parent.columnconfigure(0, weight=1)
         form = ttk.Frame(parent)
@@ -211,8 +247,11 @@ class App(tk.Tk):
         ttk.Button(demos, text="Run conflicting locks demo (2 clients)", command=self.run_conflicting_locks_demo).grid(row=1, column=0, sticky="w", padx=4, pady=2)
 
         # Results box
-        self.result_text = tk.Text(parent, height=14, wrap="word")
+        self.result_text = tk.Text(parent, height=14, wrap="none", background="#0b1220", foreground="#cfe3ff", font=("Consolas", 11))
         self.result_text.grid(row=6, column=0, sticky="nsew", pady=(6, 0))
+        xscroll = ttk.Scrollbar(parent, orient="horizontal", command=self.result_text.xview)
+        xscroll.grid(row=7, column=0, sticky="ew")
+        self.result_text.configure(xscrollcommand=xscroll.set)
         parent.rowconfigure(6, weight=1)
 
         # Initialize visible fields
@@ -225,15 +264,19 @@ class App(tk.Tk):
     def _build_logs_tab(self, parent: ttk.Frame):
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
-        self.logs_text = tk.Text(parent, wrap="none", state="disabled", background="#0c0c0c", foreground="#d0d0d0")
+        parent.rowconfigure(1, weight=0)
+        self.logs_text = tk.Text(parent, wrap="none", state="disabled", background="#0b1220", foreground="#cfe3ff", font=("Consolas", 11))
         self.logs_text.grid(row=0, column=0, sticky="nsew")
         yscroll = ttk.Scrollbar(parent, orient="vertical", command=self.logs_text.yview)
         yscroll.grid(row=0, column=1, sticky="ns")
-        self.logs_text.configure(yscrollcommand=yscroll.set)
+        xscroll = ttk.Scrollbar(parent, orient="horizontal", command=self.logs_text.xview)
+        xscroll.grid(row=1, column=0, sticky="ew")
+        self.logs_text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
 
     def _build_state_tab(self, parent: ttk.Frame):
         parent.columnconfigure(1, weight=1)
         parent.rowconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=0)
 
         # Files list
         files_frame = ttk.Frame(parent)
@@ -244,11 +287,43 @@ class App(tk.Tk):
         self.files_list.bind('<<ListboxSelect>>', self._on_file_select)
 
         # Content view
-        self.state_text = tk.Text(parent, wrap="word")
+        self.state_text = tk.Text(parent, wrap="none", background="#0b1220", foreground="#cfe3ff", font=("Consolas", 11))
         self.state_text.grid(row=0, column=1, sticky="nsew")
         yscroll = ttk.Scrollbar(parent, orient="vertical", command=self.state_text.yview)
         yscroll.grid(row=0, column=2, sticky="ns")
-        self.state_text.configure(yscrollcommand=yscroll.set)
+        xscroll = ttk.Scrollbar(parent, orient="horizontal", command=self.state_text.xview)
+        xscroll.grid(row=1, column=1, sticky="ew")
+        self.state_text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+
+    def _build_failures_tab(self, parent: ttk.Frame):
+        parent.columnconfigure(0, weight=1)
+
+        frm = ttk.LabelFrame(parent, text="Crash injection")
+        frm.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        for i in range(10):
+            frm.columnconfigure(i, weight=1)
+
+        ttk.Label(frm, text="Delay (ms):").grid(row=0, column=0, sticky="e", padx=4, pady=4)
+        self.fail_delay_var = tk.StringVar(value="500")
+        ttk.Entry(frm, textvariable=self.fail_delay_var, width=8).grid(row=0, column=1, sticky="w")
+
+        ttk.Label(frm, text="Node to crash:").grid(row=0, column=2, sticky="e", padx=4)
+        self.fail_node_var = tk.StringVar(value="N2")
+        self.fail_node_combo = ttk.Combobox(frm, textvariable=self.fail_node_var, values=["N1", "N2", "N3"], width=6, state="readonly")
+        self.fail_node_combo.grid(row=0, column=3, sticky="w")
+
+        # Coordinator failure injection controls
+        ttk.Label(frm, text="Coordinator fail at:").grid(row=0, column=4, sticky="e", padx=4)
+        self.coord_fail_at_var = tk.StringVar(value="None")
+        self.coord_fail_at_combo = ttk.Combobox(frm, textvariable=self.coord_fail_at_var, values=["None", "PREPARE", "BEFORE_COMMIT", "AFTER_COMMIT"], width=16, state="readonly")
+        self.coord_fail_at_combo.grid(row=0, column=5, sticky="w")
+
+        ttk.Label(frm, text="Coord fail delay (ms):").grid(row=0, column=6, sticky="e", padx=4)
+        self.coord_fail_delay_var = tk.StringVar(value="0")
+        ttk.Entry(frm, textvariable=self.coord_fail_delay_var, width=8).grid(row=0, column=7, sticky="w")
+
+        ttk.Button(frm, text="Start transfer, then crash COORDINATOR", command=self.start_transfer_then_crash_coordinator).grid(row=1, column=0, columnspan=3, sticky="w", padx=4, pady=4)
+        ttk.Button(frm, text="Start transfer, then crash NODE (selected)", command=self.start_transfer_then_crash_node).grid(row=1, column=3, columnspan=3, sticky="w", padx=4, pady=4)
 
     # Process management
     def start_coordinator(self):
@@ -268,10 +343,33 @@ class App(tk.Tk):
             nodes_spec_parts.append(f"{node_id}:{DEFAULT_NODE_HOST}:{p}")
         nodes_spec = ",".join(nodes_spec_parts)
         cmd = [DEFAULT_PYTHON, COORDINATOR_SCRIPT, "--host", host, "--port", str(port), "--nodes", nodes_spec]
-        self.coordinator = ManagedProcess("coordinator", cmd)
+
+        # Build environment for coordinator failure injection
+        env = os.environ.copy()
+        fail_at = self.coord_fail_at_var.get().strip() if hasattr(self, 'coord_fail_at_var') else "None"
+        fail_at_env = "" if not fail_at or fail_at == "None" else fail_at
+        fail_delay = self.coord_fail_delay_var.get().strip() if hasattr(self, 'coord_fail_delay_var') else "0"
+        if fail_at_env:
+            env["COORD_FAIL_AT"] = fail_at_env
+        else:
+            env.pop("COORD_FAIL_AT", None)
+        try:
+            delay_int = int(fail_delay or "0")
+        except ValueError:
+            delay_int = 0
+        env["COORD_FAIL_DELAY_MS"] = str(delay_int)
+
+        if self.coordinator is None:
+            self.coordinator = ManagedProcess("coordinator", cmd, env=env)
+        else:
+            # update command/env in case config changed
+            self.coordinator.cmd = cmd
+            self.coordinator.env = env
         ok = self.coordinator.start()
         if ok:
             self._log(f"[ui] Started coordinator on {host}:{port} with nodes {nodes_spec}\n")
+            if fail_at_env:
+                self._log(f"[ui] Coordinator failure injection: COORD_FAIL_AT={fail_at_env}, COORD_FAIL_DELAY_MS={delay_int}\n")
             self.btn_start_coord.config(state="disabled")
             self.btn_stop_coord.config(state="normal")
         else:
@@ -306,6 +404,8 @@ class App(tk.Tk):
             self._log(f"[ui] Started node {node_id} on {DEFAULT_NODE_HOST}:{port}\n")
         self.btn_start_nodes.config(state="disabled")
         self.btn_stop_nodes.config(state="normal")
+        # refresh failures tab node list
+        self._refresh_failures_node_list()
 
     def stop_nodes(self):
         for node_id, mp in list(self.nodes.items()):
@@ -315,6 +415,8 @@ class App(tk.Tk):
         self.node_ports.clear()
         self.btn_start_nodes.config(state="normal")
         self.btn_stop_nodes.config(state="disabled")
+        # refresh failures tab node list
+        self._refresh_failures_node_list()
 
     # Logs handling
     def _drain_logs_loop(self):
@@ -532,6 +634,138 @@ class App(tk.Tk):
             self.result_text.insert("end", text)
             self.result_text.see("end")
         self.after(0, _append)
+
+    # Failures / Recovery support
+    def _refresh_failures_node_list(self):
+        try:
+            if hasattr(self, 'fail_node_combo'):
+                values = sorted(list(self.nodes.keys())) or ["N1", "N2", "N3"]
+                self.fail_node_combo.configure(values=values)
+                # keep selection valid
+                cur = self.fail_node_var.get()
+                if cur not in values and values:
+                    self.fail_node_var.set(values[0])
+        except Exception:
+            pass
+
+    def _build_transfer_cmd_from_fields(self) -> Optional[List[str]]:
+        try:
+            coord_host = self.coord_host_var.get().strip() or DEFAULT_COORDINATOR_HOST
+            coord_port = int(self.coord_port_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid input", "Coordinator port must be an integer")
+            return None
+        from_node = self.from_node_var.get().strip()
+        from_acc = self.from_account_var.get().strip()
+        to_node = self.to_node_var.get().strip()
+        to_acc = self.to_account_var.get().strip()
+        amount_str = self.amount_var.get().strip()
+        if not (from_node and from_acc and to_node and to_acc and amount_str):
+            messagebox.showerror("Invalid input", "All transfer fields are required")
+            return None
+        try:
+            amount = int(amount_str)
+        except ValueError:
+            messagebox.showerror("Invalid input", "Amount must be an integer")
+            return None
+        cmd = [
+            DEFAULT_PYTHON,
+            CLIENT_SCRIPT,
+            "--coord-host", coord_host,
+            "--coord-port", str(coord_port),
+            "--from-node", from_node,
+            "--from-account", from_acc,
+            "--to-node", to_node,
+            "--to-account", to_acc,
+            "--amount", str(amount),
+        ]
+        return cmd
+
+    def start_transfer_then_crash_coordinator(self):
+        cmd = self._build_transfer_cmd_from_fields()
+        if not cmd:
+            return
+        try:
+            delay_ms = int(self.fail_delay_var.get().strip())
+        except Exception:
+            messagebox.showerror("Invalid delay", "Delay must be an integer (ms)")
+            return
+        if not self.coordinator or not self.coordinator.is_running():
+            messagebox.showerror("Coordinator", "Coordinator is not running")
+            return
+        self._append_result("Starting transfer, will crash COORDINATOR after delay\n")
+        threading.Thread(target=self._scenario_crash_coordinator_task, args=(cmd, delay_ms), daemon=True).start()
+
+    def _scenario_crash_coordinator_task(self, cmd: List[str], delay_ms: int):
+        # If a deterministic coordinator failure hook is configured, we don't need to manage timing here.
+        fail_at = self.coord_fail_at_var.get().strip() if hasattr(self, 'coord_fail_at_var') else "None"
+        use_env_hook = bool(fail_at and fail_at != "None")
+
+        # start transfer
+        self._run_client_and_show_result(cmd)
+
+        if use_env_hook:
+            # Let the coordinator self-terminate at the selected phase
+            self._log("[ui] Coordinator will self-terminate at configured phase (no GUI delay crash).\n")
+        else:
+            # Fallback to legacy delay-based crash
+            time.sleep(max(0, delay_ms) / 1000.0)
+            try:
+                if self.coordinator and self.coordinator.is_running():
+                    self._log("[ui] Injecting failure: terminating coordinator\n")
+                    self.coordinator.stop()
+                else:
+                    self._log("[ui] Coordinator already stopped before crash\n")
+            except Exception as e:
+                self._log(f"[ui] Error stopping coordinator: {e}\n")
+            # restart after ~1.5s
+            time.sleep(1.5)
+            try:
+                if self.coordinator:
+                    self.coordinator.start()
+                    self._log("[ui] Restarted coordinator after crash\n")
+            except Exception as e:
+                self._log(f"[ui] Error restarting coordinator: {e}\n")
+
+    def start_transfer_then_crash_node(self):
+        cmd = self._build_transfer_cmd_from_fields()
+        if not cmd:
+            return
+        try:
+            delay_ms = int(self.fail_delay_var.get().strip())
+        except Exception:
+            messagebox.showerror("Invalid delay", "Delay must be an integer (ms)")
+            return
+        node_id = self.fail_node_var.get().strip()
+        mp = self.nodes.get(node_id)
+        if not mp or not mp.is_running():
+            messagebox.showerror("Node", f"Node {node_id} is not running")
+            return
+        self._append_result(f"Starting transfer, will crash NODE {node_id} after delay\n")
+        threading.Thread(target=self._scenario_crash_node_task, args=(cmd, delay_ms, node_id), daemon=True).start()
+
+    def _scenario_crash_node_task(self, cmd: List[str], delay_ms: int, node_id: str):
+        mp = self.nodes.get(node_id)
+        # start transfer
+        self._run_client_and_show_result(cmd)
+        # wait then crash node
+        time.sleep(max(0, delay_ms) / 1000.0)
+        try:
+            if mp and mp.is_running():
+                self._log(f"[ui] Injecting failure: terminating node {node_id}\n")
+                mp.stop()
+            else:
+                self._log(f"[ui] Node {node_id} already stopped before crash\n")
+        except Exception as e:
+            self._log(f"[ui] Error stopping node {node_id}: {e}\n")
+        # restart after ~1.5s
+        time.sleep(1.5)
+        try:
+            if mp:
+                mp.start()
+                self._log(f"[ui] Restarted node {node_id} after crash\n")
+        except Exception as e:
+            self._log(f"[ui] Error restarting node {node_id}: {e}\n")
 
     def on_close(self):
         try:

@@ -12,6 +12,7 @@ This file implements the **Coordinator Node** as described in the architecture:
 import argparse
 import json
 import logging
+import os
 import socket
 import threading
 import time
@@ -47,6 +48,17 @@ class Coordinator:
         self.tx_log_file = self.data_dir / "coordinator_tx_log.jsonl"
         # Track active transactions for recovery
         self.active_txs: Dict[str, Dict] = {}
+        # Failure injection configuration (env-driven)
+        self.fail_at = (os.environ.get("COORD_FAIL_AT") or "").strip().upper()
+        try:
+            self.fail_delay_ms = int(os.environ.get("COORD_FAIL_DELAY_MS", "0"))
+        except ValueError:
+            self.fail_delay_ms = 0
+        if self.fail_at and self.fail_at not in {"PREPARE", "BEFORE_COMMIT", "AFTER_COMMIT"}:
+            logging.warning("Unknown COORD_FAIL_AT=%s; failure injection disabled", self.fail_at)
+            self.fail_at = ""
+        if self.fail_at:
+            logging.info("Failure injection configured: COORD_FAIL_AT=%s, COORD_FAIL_DELAY_MS=%s", self.fail_at, self.fail_delay_ms)
         # Load and recover incomplete transactions from log
         self._recover_incomplete_transactions()
 
@@ -77,6 +89,17 @@ class Coordinator:
                 self.active_txs[txid] = entry
             elif phase in ["COMPLETE", "ABORT"]:
                 self.active_txs.pop(txid, None)
+
+    def _maybe_fail(self, phase: str) -> None:
+        """If configured to fail at the given phase, sleep and terminate.
+        Valid phases: PREPARE, BEFORE_COMMIT, AFTER_COMMIT
+        """
+        if self.fail_at == phase:
+            if self.fail_delay_ms > 0:
+                time.sleep(self.fail_delay_ms / 1000.0)
+            logging.info("Intentional coordinator crash at %s per COORD_FAIL_AT", phase)
+            # Exit non-zero so the GUI recognizes a crash
+            raise SystemExit(1)
 
     def _recover_incomplete_transactions(self) -> None:
         """
@@ -221,6 +244,8 @@ class Coordinator:
         votes: Dict[str, bool] = {}
         # Phase 1: PREPARE
         self._log_transaction(txid, "PREPARE", node_ops=node_ops)
+        # Intentional crash hook: after logging PREPARE, before contacting nodes
+        self._maybe_fail("PREPARE")
         
         for node_id, ops in node_ops.items():
             ok = self._prepare_on_node(node_id, txid, ops)
@@ -230,9 +255,13 @@ class Coordinator:
         if all(votes.values()):
             # Phase 2: COMMIT everywhere
             logging.info("All nodes voted COMMIT for %s. Committing.", txid)
+            # Intentional crash hook: before durably logging COMMIT
+            self._maybe_fail("BEFORE_COMMIT")
             self._log_transaction(txid, "COMMIT", node_ops=node_ops, status="all_voted_commit")
             for node_id, ops in node_ops.items():
                 self._commit_on_node(node_id, txid, ops)
+            # Intentional crash hook: after COMMIT log and node commits, before COMPLETE
+            self._maybe_fail("AFTER_COMMIT")
             logging.info("Transaction %s committed.", txid)
             self._log_transaction(txid, "COMPLETE", status="committed")
             return True

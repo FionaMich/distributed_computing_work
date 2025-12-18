@@ -134,64 +134,128 @@ Balances:
 
 ## 7) Failures and Recovery (GUI-driven)
 
-This section shows how to demonstrate failure scenarios and recovery using the GUI’s "Failures / Recovery" tab and how to interpret the resulting artifacts.
+### Using the Failure/Recovery Panel Effectively (Crash Timing Recipes)
+
+You’re crashing too late in the transaction if your transfers still succeed after the crash. In 2PC, once COMMIT is decided/sent, the transaction will complete and must be durable. To demonstrate recovery that aborts in-flight work, crash before the commit decision or make a participant unreachable during PREPARE. Use one of these reproducible recipes.
+
+Recipe A — Coordinator crash before decision (abort on recovery)
+- Goal: Crash the coordinator during PREPARE so no COMMIT is decided; on restart it aborts the incomplete tx.
+- Steps:
+  1) Start Nodes and Coordinator from the GUI.
+  2) Failures / Recovery tab:
+     - Coordinator fail at: PREPARE
+     - Coord fail delay (ms): 0–200
+  3) Operations tab:
+     - Prepare a transfer crossing two nodes (e.g., N1/A → N2/B, small amount).
+     - Click “Execute” (or use “Start transfer, then crash COORDINATOR”).
+  4) Observe: The coordinator self-terminates during PREPARE. Restart it (auto-restarts if using the scheduled button; otherwise Start Coordinator).
+  5) Verify evidence:
+     - data/coordinator_tx_log.jsonl: START, PREPARE, then after restart an ABORT and COMPLETE=aborted (recovery).
+     - data/node_N1_log.jsonl / data/node_N2_log.jsonl: may show prepare_ok/failed; must show no commit for that txid.
+     - data/node_*_state.json: unchanged for accounts touched by that txid.
+- If you still see commits, you crashed after COMMIT; reduce delay, or keep PREPARE hook with delay 0.
+
+Recipe B — Crash a node during PREPARE (coordinator aborts)
+- Goal: Make one participant unreachable mid-transaction so the coordinator must abort globally.
+- Steps:
+  1) Start Nodes and Coordinator.
+  2) Failures / Recovery tab:
+     - Node to crash: pick the involved node (e.g., N2 if to_account is on N2).
+     - Delay (ms): 200–600 (aim for PREPARE/early COMMIT window).
+  3) Operations tab: Set a transfer involving the chosen node (e.g., N1/A → N2/B).
+  4) Click “Start transfer, then crash NODE (selected)”.
+  5) GUI kills that node, restarts ~1.5 s later.
+  6) Verify evidence:
+     - data/coordinator_tx_log.jsonl: START, PREPARE, then ABORT and COMPLETE=aborted due to non-response.
+     - Crashed node log: no commit entry for that txid.
+     - State files: unchanged for that tx.
+
+Recipe C — Show durability when crashing after commit (transaction still goes through)
+- Goal: Demonstrate that a crash after COMMIT doesn’t lose a committed transaction.
+- Steps:
+  1) Failures / Recovery tab: Coordinator fail at: AFTER_COMMIT (or set a longer delay).
+  2) Run a transfer.
+  3) Coordinator crashes post-decision; on restart, you’ll see:
+     - data/coordinator_tx_log.jsonl: COMMIT followed by COMPLETE=committed (or commit finalized on restart).
+     - Node logs: commit/update present.
+     - State files: balances updated and retained across restart.
+
+Why transactions “still go through”
+- If you crash at/after COMMIT, participants that received COMMIT will finish and persist the update. This is correct and demonstrates durability, not abort-on-recovery.
+
+Verification checklist (for report screenshots)
+- Coordinator log (data/coordinator_tx_log.jsonl):
+  - Abort demo: START → PREPARE → ABORT → COMPLETE=aborted (after restart).
+  - Durability demo: START → PREPARE → COMMIT → COMPLETE=committed.
+- Node logs (data/node_NX_log.jsonl):
+  - Abort demo: no “commit” for the txid; possibly “prepare_failed”.
+  - Durability demo: “update” and “commit” entries for affected accounts.
+- State files (data/node_NX_state.json):
+  - Abort demo: unchanged for the touched accounts.
+  - Durability demo: reflect the committed new balances.
+- Optional: Use GUI read_balance to corroborate state.
+
+Tuning tips
+- Use Coordinator fail at = PREPARE to reliably force abort on recovery.
+- If using delay-based crash, shrink delay (100–300 ms) to land during PREPARE; if commits slip through, lower further.
+- Ensure the transfer spans two nodes (source and destination on different nodes) so both sides are involved during PREPARE.
+
+This section shows how to use the GUI’s Failures / Recovery tab to run immediate or scheduled crash/restart scenarios and how to interpret the resulting artifacts.
 
 A) Coordinator crash during a transaction
 - Setup:
   - Start Nodes (e.g., N1=6001, N2=6002, N3=6003) and Coordinator (127.0.0.1:5000) from the GUI.
-  - In the Operations tab, prepare a transfer that spans at least two nodes (e.g., N1/A → N2/B, amount 30).
-- Execute:
+  - In Operations, prepare a transfer that spans at least two nodes (e.g., N1/A → N2/B, amount 30).
+- Execute (scheduled):
   - Open the Failures / Recovery tab.
-  - Set Delay (ms) (e.g., 300–800 ms). This timing aims to crash the coordinator while the transaction is in PREPARE/COMMIT.
-  - Click "Start transfer, then crash COORDINATOR". The GUI starts the transfer, waits Delay, then terminates the coordinator; it restarts the coordinator ~1.5s later.
+  - Set Delay (ms) (e.g., 300–800 ms) to land during PREPARE/early COMMIT.
+  - Click Start transfer, then crash COORDINATOR. The GUI starts the transfer, waits Delay, terminates the coordinator, then restarts it automatically (~1.5 s later).
 - Evidence:
-  - Coordinator (`data/coordinator_tx_log.jsonl`): You will see `START` and `PREPARE` for txid T. After restart, the coordinator scans its log, identifies T as incomplete, writes `ABORT` for T (status may include `recovered`) and then `COMPLETE` (e.g., `aborted_during_recovery`). This demonstrates recovery: incomplete transactions are rolled back on restart.
-  - Nodes (`data/node_NX_log.jsonl`): Depending on timing, some nodes may show `prepare_ok` for T; there should be no `commit` for T. Absent a commit, state must remain unchanged by T.
-  - State files (`data/node_NX_state.json`): Unchanged for accounts touched by T (no partial commits).
+  - Coordinator (data/coordinator_tx_log.jsonl): `START` and `PREPARE` for txid T, then after restart the coordinator scans for incomplete T, appends `ABORT` (status may include `recovered`) followed by `COMPLETE` (e.g., `aborted_during_recovery`). This proves recovery: in-flight transactions are rolled back on restart.
+  - Nodes (data/node_NX_log.jsonl): Some may show `prepare_ok` for T; there should be no `commit` for T. Without a commit, state must remain unchanged by T.
+  - State files (data/node_NX_state.json): Unchanged for accounts touched by T (no partial commits).
 - Interpretation:
-  - Atomicity is preserved: No partial updates, and the system returns to a consistent state. The coordinator’s recovery phase aborts in-flight txids on restart.
+  - Atomicity is preserved; the coordinator’s recovery aborts any undecided txids after it comes back up.
 
 B) Node crash during a transaction
 - Setup:
   - Start Nodes and Coordinator from the GUI.
-  - In Failures / Recovery, select a node (e.g., N2) to crash.
-  - In Operations, prepare a transfer involving that node (e.g., N1/A → N2/B, amount 50).
-- Execute:
-  - Set Delay (ms) to hit the PREPARE/COMMIT window.
-  - Click "Start transfer, then crash NODE (selected)". The GUI starts the transfer, waits Delay, kills the node, and restarts it ~1.5s later.
+  - In Failures / Recovery, choose the target node (e.g., N2).
+  - In Operations, prepare a transfer that involves the chosen node (e.g., N1/A → N2/B, amount 50).
+- Execute (scheduled):
+  - Set Delay (ms) for PREPARE/COMMIT window alignment.
+  - Click Start transfer, then crash NODE (selected). The GUI starts the transfer, waits Delay, kills the node, then restarts it automatically (~1.5 s later).
 - Evidence:
-  - Coordinator (`data/coordinator_tx_log.jsonl`): Shows `START` and `PREPARE` for txid T; when the node fails to respond, the coordinator logs `ABORT` and then `COMPLETE` (`aborted`). This demonstrates safe handling of participant failure.
-  - Nodes (`data/node_NX_log.jsonl`): The crashed node may have `prepare_ok` for T (or none), but there should be no `commit` for T. Other nodes may also reflect `prepare_ok` or no-op; no commit.
+  - Coordinator (data/coordinator_tx_log.jsonl): `START` and `PREPARE` for txid T; due to the node’s non-response, coordinator logs `ABORT` then `COMPLETE` (status like `aborted`).
+  - Nodes (data/node_NX_log.jsonl): The crashed node may show `prepare_ok` (or none), but there must be no `commit` for T. Other nodes could show `prepare_ok` or no-op; no commit.
   - State files: Remain unchanged for T. After restart, the crashed node reloads its state file without partial changes.
 - Interpretation:
-  - Coordinator treats non-response as vote `ABORT` and rolls back the transaction globally. Durability and consistency are preserved.
+  - Non-response is treated as a vote to abort, and the coordinator rolls back globally. Durability and consistency hold.
 
 C) Notes on timing and reproducibility
-- The Delay (ms) is a heuristic; adjust up/down to land within `PREPARE` or just before `COMMIT`. Use the Logs tab to observe the actual sequence.
-- Firewall/port issues (`WinError 10061`) indicate reachability failures; these are still handled as aborts and are valid demonstrations of failure handling.
-- After recovery scenarios, verify with the Ground Truth Method (Section 4) that no partial updates were committed.
+- Delay (ms) is a heuristic; adjust to land in PREPARE or just before COMMIT. Watch the Logs tab for the actual sequence.
+- Connection refused (WinError 10061) indicates reachability failures; these are handled as aborts and still demonstrate safe failure handling.
+- After any recovery scenario, use the Ground Truth Method (Section 4) to verify no partial updates.
 
-D) Immediate vs Scheduled controls (what the buttons mean)
+D) Immediate vs Scheduled controls
 - Immediate crash/restart:
-  - Crash Coordinator (Terminate) / Restart Coordinator act right now, independent of any transfer.
-  - Crash Node / Restart Node act right now on the selected node.
-  - Use these for ad-hoc failures or to quickly reset the environment.
+  - Crash Coordinator (Terminate) / Restart Coordinator: act immediately, independent of any transfer.
+  - Crash Node / Restart Node: act immediately on the selected node.
 - Scheduled crash during transfer:
-  - Start transfer, then crash COORDINATOR begins a transfer from the Operations form, waits Delay (ms), then terminates the coordinator and restarts it to illustrate recovery.
-  - Start transfer, then crash NODE (selected) begins a transfer, waits Delay (ms), then terminates the chosen node and restarts it to show safe abort and node restart behavior.
-  - Use these to reproducibly align the failure within the PREPARE/COMMIT window without manual timing.
+  - Start transfer, then crash COORDINATOR: kicks off a transfer from the Operations form, waits Delay, then terminates and restarts the coordinator to show recovery.
+  - Start transfer, then crash NODE (selected): starts a transfer, waits Delay, then terminates and restarts the chosen node to show safe abort and restart behavior.
 
-E) Where recovery is demonstrated (evidence to look for)
-- Coordinator recovery after restart:
-  - In `data/coordinator_tx_log.jsonl` after the restart, find entries indicating the scan of incomplete transactions and, for each affected `txid`:
-    - `{"txid": T, "phase": "ABORT", "status": "recovered"}` (or similar), followed by
-    - `{"txid": T, "phase": "COMPLETE", "status": "aborted_during_recovery"}`
-  - In the GUI Logs tab, after restart, you’ll see the coordinator rebind and log that it is listening again (e.g., "Coordinator listening on 127.0.0.1:5000").
-- Participant node evidence:
-  - For the crashed node scenario, the node log (`data/node_NX_log.jsonl`) may include `abort` acknowledgements for in-flight `txid`s; there should be no `commit` for those `txid`s.
-  - On node restart, you may see a log message indicating that it "Loaded state" from `node_NX_state.json`. State remains consistent (no partial updates) for the aborted transactions.
+E) Where recovery is demonstrated (what to look for)
+- Coordinator after restart:
+  - In data/coordinator_tx_log.jsonl, find for each affected txid:
+    - {"txid": T, "phase": "ABORT", "status": "recovered"} (or similar)
+    - {"txid": T, "phase": "COMPLETE", "status": "aborted_during_recovery"}
+  - In the GUI Logs tab, after restart, you will see the coordinator rebind (e.g., "Coordinator listening on 127.0.0.1:5000").
+- Participant nodes:
+  - For the crashed node scenario, node logs may include `abort` acknowledgements; there should be no `commit` for those txids.
+  - On node restart, a message such as "Loaded state" from node_NX_state.json appears; state remains consistent (no partial updates).
 - State files:
-  - `data/node_NX_state.json` for the accounts referenced by the aborted `txid`s remain unchanged compared to their pre-failure values (no half-applied deltas), confirming atomicity.
+  - data/node_NX_state.json remains unchanged for any txid that was aborted during recovery (no half-applied deltas).
 
 ## 8) Common Failure Mode: Connection Refused (`WinError 10061`)
 
@@ -262,6 +326,10 @@ Use this template to present evidence for any run—replace placeholders with yo
   - 88b0069c-... (N3/C -20 → N1/A +20) aborted due to lock contention on A at N1:
     - N1 log: prepare_failed reason=lock_contention_on_A; later abort.
     - Coordinator: ABORT then COMPLETE=aborted.
+
+- Failure-recovery observations (from GUI scheduled runs and node-and-coordinator-crash-log.jpg):
+  - During coordinator crash-while-in-flight: coordinator restarted, scanned logs, appended ABORT and COMPLETE for the affected txid(s); participant logs showed no commit; state files unchanged.
+  - During node crash-while-in-flight: coordinator timed out waiting for the node and aborted globally; after node restart, no commit entries existed for that txid; state files unchanged.
 
 These observations are derived directly from:
 - data/coordinator_tx_log.jsonl (phases and outcomes)
